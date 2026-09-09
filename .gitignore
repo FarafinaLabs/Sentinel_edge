@@ -1,0 +1,19 @@
+# Environnements virtuels
+venv/
+.env
+
+# Python cache & build
+__pycache__/
+*.py[cod]
+*.pt
+*.onnx
+
+# Données locales et captures
+captures/
+*.db
+*.sqlite3
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store

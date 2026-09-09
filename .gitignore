@@ -17,3 +17,8 @@ captures/
 .vscode/
 .idea/
 .DS_Store
+
+# Documents & Notebooks locaux
+*.pdf
+*.ipynb
+.ipynb_checkpoints/

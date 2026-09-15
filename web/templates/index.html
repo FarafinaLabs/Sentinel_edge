@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sentinel-Edge | Dashboard d'Ingestion Vidéo</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            sentinel: {
+              bg: '#0a0d14',
+              surface: '#111726',
+              border: '#1e293b',
+              accent: '#00f0ff',
+              emerald: '#10b981',
+              warning: '#f59e0b',
+              danger: '#ef4444',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-[#0a0d14] text-slate-100 min-h-screen font-sans antialiased selection:bg-cyan-500 selection:text-black">
+
+  <!-- Header / Navigation -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+          <i data-lucide="shield-alert" class="w-6 h-6 text-black"></i>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="font-bold text-lg tracking-wide text-white">SENTINEL-EDGE</h1>
+            <span class="text-xs font-mono uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded-full">MVP V0</span>
+          </div>
+          <p class="text-xs text-slate-400">Pipeline d'Ingestion Vidéo • <span class="text-cyan-300 font-medium">AMADOU H TRAORE</span> (Pôle IA)</p>
+        </div>
+      </div>
+
+      <!-- Quick Status Badges -->
+      <div class="flex items-center space-x-3">
+        <div class="hidden sm:flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/60 text-xs">
+          <span id="header-status-indicator" class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span id="header-status-text" class="font-mono text-slate-300">CONNECTED</span>
+        </div>
+        <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/60 text-xs">
+          <i data-lucide="activity" class="w-4 h-4 text-cyan-400"></i>
+          <span id="header-fps" class="font-mono font-bold text-cyan-400">-- FPS</span>
+        </div>
+        <button id="btn-snapshot-header" class="flex items-center space-x-1.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black font-semibold text-xs px-3.5 py-1.5 rounded-lg shadow-md transition-all">
+          <i data-lucide="camera" class="w-4 h-4"></i>
+          <span class="hidden md:inline">Snapshot</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Grid: Video Stream (Left/Top) & Controls (Right/Bottom) -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- Colonne Gauche : Lecteur Vidéo Principal (8 cols) -->
+      <div class="lg:col-span-8 space-y-4">
+        <div class="relative rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 shadow-2xl group">
+          
+          <!-- Badges Overlay Vidéo -->
+          <div class="absolute top-4 left-4 z-20 flex flex-wrap gap-2 items-center pointer-events-none">
+            <span class="flex items-center space-x-1.5 bg-black/60 backdrop-blur-md border border-red-500/40 text-red-400 text-xs font-mono font-semibold px-2.5 py-1 rounded-md">
+              <span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+              <span>LIVE</span>
+            </span>
+            <span id="overlay-source" class="bg-black/60 backdrop-blur-md border border-slate-700 text-slate-200 text-xs font-mono px-2.5 py-1 rounded-md">
+              Source: Chargement...
+            </span>
+            <span id="overlay-resolution" class="bg-black/60 backdrop-blur-md border border-slate-700 text-slate-300 text-xs font-mono px-2 py-1 rounded-md">
+              640x480
+            </span>
+          </div>
+
+          <!-- Badges Overlay Droite (AI & Drop status) -->
+          <div class="absolute top-4 right-4 z-20 flex items-center space-x-2 pointer-events-none">
+            <span id="overlay-ai-badge" class="bg-black/60 backdrop-blur-md border border-slate-700 text-slate-400 text-xs font-mono px-2.5 py-1 rounded-md">
+              IA YOLOv8: OFF
+            </span>
+          </div>
+
+          <!-- Le Flux Vidéo MJPEG Direct -->
+          <div class="relative aspect-video flex items-center justify-center bg-black">
+            <img id="video-stream" src="/video_feed" alt="Flux Vidéo Sentinel-Edge" class="w-full h-full object-contain">
+            
+            <!-- Message de déconnexion si flux down -->
+            <div id="video-fallback" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-sm p-6 text-center space-y-3">
+              <i data-lucide="video-off" class="w-12 h-12 text-amber-400 animate-bounce"></i>
+              <h3 class="text-base font-semibold text-slate-200">Tentative de connexion au flux...</h3>
+              <p class="text-xs text-slate-400 max-w-sm">Vérifiez la connexion Wi-Fi du smartphone ou le branchement de la webcam.</p>
+              <button onclick="reloadStream()" class="text-xs bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 px-3 py-1.5 rounded-lg hover:bg-cyan-500/30 transition">
+                Réessayer la connexion
+              </button>
+            </div>
+          </div>
+
+          <!-- Barre d'outils sous le flux -->
+          <div class="bg-slate-900/90 border-t border-slate-800/80 px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center space-x-3 text-xs text-slate-400">
+              <span class="flex items-center space-x-1">
+                <i data-lucide="gauge" class="w-3.5 h-3.5 text-cyan-400"></i>
+                <span id="toolbar-fps" class="text-slate-200 font-mono font-medium">0 FPS</span>
+              </span>
+              <span>•</span>
+              <span class="flex items-center space-x-1">
+                <i data-lucide="layers" class="w-3.5 h-3.5 text-slate-400"></i>
+                <span id="toolbar-buffer" class="text-slate-300 font-mono">Buffer Drop-Oldest (0 ms lag)</span>
+              </span>
+            </div>
+
+            <div class="flex items-center space-x-2">
+              <button onclick="takeSnapshot()" class="flex items-center space-x-1 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg border border-slate-700 transition">
+                <i data-lucide="camera" class="w-3.5 h-3.5 text-cyan-400"></i>
+                <span>Capture</span>
+              </button>
+              <button onclick="toggleFullscreen()" class="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition" title="Plein écran">
+                <i data-lucide="maximize" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4 Cartes Métriques Télémétrie Rapides -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          
+          <div class="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3.5 backdrop-blur-sm">
+            <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
+              <span>FPS Effectif</span>
+              <i data-lucide="zap" class="w-3.5 h-3.5 text-cyan-400"></i>
+            </div>
+            <div id="stat-fps" class="text-xl font-bold font-mono text-cyan-400">--</div>
+            <div class="text-[10px] text-slate-500 mt-0.5">Fréquence Thread 1</div>
+          </div>
+
+          <div class="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3.5 backdrop-blur-sm">
+            <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
+              <span>Frames Totales</span>
+              <i data-lucide="film" class="w-3.5 h-3.5 text-blue-400"></i>
+            </div>
+            <div id="stat-frames" class="text-xl font-bold font-mono text-slate-200">0</div>
+            <div class="text-[10px] text-slate-500 mt-0.5">Acquises sans blocage</div>
+          </div>
+
+          <div class="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3.5 backdrop-blur-sm">
+            <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
+              <span>Frames Droppées</span>
+              <i data-lucide="filter" class="w-3.5 h-3.5 text-amber-400"></i>
+            </div>
+            <div id="stat-drops" class="text-xl font-bold font-mono text-amber-400">0</div>
+            <div class="text-[10px] text-slate-500 mt-0.5">Pour garantir zéro lag</div>
+          </div>
+
+          <div class="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3.5 backdrop-blur-sm">
+            <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
+              <span>Uptime Flux</span>
+              <i data-lucide="clock" class="w-3.5 h-3.5 text-emerald-400"></i>
+            </div>
+            <div id="stat-uptime" class="text-xl font-bold font-mono text-emerald-400">0s</div>
+            <div class="text-[10px] text-slate-500 mt-0.5">Disponibilité continue</div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Colonne Droite : Contrôles, Sources & Détection IA (4 cols) -->
+      <div class="lg:col-span-4 space-y-5">
+        
+        <!-- Panneau de Sélection de Source Vidéo -->
+        <div class="bg-slate-900/70 border border-slate-800/90 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h2 class="text-sm font-semibold tracking-wide text-white flex items-center space-x-2">
+              <i data-lucide="video" class="w-4 h-4 text-cyan-400"></i>
+              <span>Sélection de la Source</span>
+            </h2>
+            <span id="source-badge-type" class="text-[11px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded">Webcam 0</span>
+          </div>
+
+          <!-- Boutons de présélection rapide -->
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="setSource('0')" class="btn-preset bg-slate-800 hover:bg-slate-700/80 border border-slate-700/80 text-xs p-2.5 rounded-xl text-left transition flex items-center space-x-2">
+              <i data-lucide="laptop" class="w-4 h-4 text-cyan-400"></i>
+              <div>
+                <div class="font-medium text-slate-200">Webcam 0</div>
+                <div class="text-[10px] text-slate-400">Caméra PC intégrée</div>
+              </div>
+            </button>
+
+            <button onclick="setSource('mock')" class="btn-preset bg-slate-800 hover:bg-slate-700/80 border border-slate-700/80 text-xs p-2.5 rounded-xl text-left transition flex items-center space-x-2">
+              <i data-lucide="sparkles" class="w-4 h-4 text-purple-400"></i>
+              <div>
+                <div class="font-medium text-slate-200">Mire Synthétique</div>
+                <div class="text-[10px] text-slate-400">Test sans caméra</div>
+              </div>
+            </button>
+          </div>
+
+          <!-- Formulaire URL IP Webcam (Smartphone Android) -->
+          <div class="space-y-2 pt-1">
+            <label class="block text-xs font-medium text-slate-300 flex items-center justify-between">
+              <span>URL Smartphone (IP Webcam / RTSP) :</span>
+              <button onclick="showHelpModal()" class="text-cyan-400 hover:underline text-[11px] flex items-center space-x-1">
+                <i data-lucide="help-circle" class="w-3 h-3"></i>
+                <span>Comment connecter ?</span>
+              </button>
+            </label>
+            <div class="flex space-x-2">
+              <input type="text" id="custom-source-input" placeholder="http://192.168.1.50:8080/video" value="http://192.168.1.50:8080/video"
+                     class="flex-1 bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500 transition">
+              <button onclick="submitCustomSource()" class="bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-xs px-3.5 py-2 rounded-xl transition flex items-center space-x-1 shadow-md shadow-cyan-500/20">
+                <i data-lucide="link-2" class="w-3.5 h-3.5"></i>
+                <span>Connecter</span>
+              </button>
+            </div>
+            <p class="text-[10px] text-slate-500">Exemples valides : <code class="text-slate-400">0</code>, <code class="text-slate-400">http://192.168.1.X:8080/video</code>, <code class="text-slate-400">rtsp://...</code>, <code class="text-slate-400">mock</code></p>
+          </div>
+        </div>
+
+        <!-- Panneau Intégration IA YOLOv8 -->
+        <div class="bg-slate-900/70 border border-slate-800/90 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h2 class="text-sm font-semibold tracking-wide text-white flex items-center space-x-2">
+              <i data-lucide="brain-circuit" class="w-4 h-4 text-emerald-400"></i>
+              <span>Intégration Moteur IA (Tomota)</span>
+            </h2>
+            <span class="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded">YOLOv8n</span>
+          </div>
+
+          <div class="flex items-center justify-between bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+            <div>
+              <div class="text-xs font-semibold text-slate-200">Détection Humains en Direct</div>
+              <div class="text-[10px] text-slate-400">Filtre classe 0 + Bounding Boxes</div>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="toggle-ai-checkbox" onchange="toggleAI()" class="sr-only peer">
+              <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+            </label>
+          </div>
+          <p class="text-[10px] text-slate-400">
+            Prouve l'interconnexion parfaite entre le <span class="text-cyan-300 font-medium">Thread 1 d'ingestion (Amadou)</span> et le <span class="text-emerald-300 font-medium">Thread 2 d'inférence (Tomota)</span>.
+          </p>
+        </div>
+
+        <!-- Actions Rapides -->
+        <div class="bg-slate-900/70 border border-slate-800/90 rounded-2xl p-4 shadow-xl backdrop-blur-md flex items-center justify-between">
+          <button onclick="takeSnapshot()" class="flex-1 mr-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black font-semibold text-xs py-2.5 px-3 rounded-xl transition flex items-center justify-center space-x-2 shadow-lg shadow-cyan-500/15">
+            <i data-lucide="camera" class="w-4 h-4"></i>
+            <span>Prendre Snapshot</span>
+          </button>
+          <button onclick="reloadStream()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 p-2.5 rounded-xl border border-slate-700 transition" title="Redémarrer le flux">
+            <i data-lucide="rotate-cw" class="w-4 h-4"></i>
+          </button>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- Section Inférieure : Galerie Snapshots & Console Logs -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2">
+      
+      <!-- Galerie Snapshots (7 cols) -->
+      <div class="lg:col-span-7 bg-slate-900/70 border border-slate-800/90 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-3">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <h3 class="text-sm font-semibold text-white flex items-center space-x-2">
+            <i data-lucide="image" class="w-4 h-4 text-cyan-400"></i>
+            <span>Derniers Clichés d'Alerte / Snapshots</span>
+          </h3>
+          <span id="snapshot-count" class="text-xs text-slate-400">0 enregistrés</span>
+        </div>
+
+        <div id="snapshots-gallery" class="grid grid-cols-2 sm:grid-cols-4 gap-3 max-h-56 overflow-y-auto pr-1">
+          <div class="col-span-full py-8 text-center text-xs text-slate-500">
+            Aucun snapshot pris pour le moment. Cliquez sur "Snapshot" pour capturer une frame.
+          </div>
+        </div>
+      </div>
+
+      <!-- Console Logs en Direct (5 cols) -->
+      <div class="lg:col-span-5 bg-slate-900/70 border border-slate-800/90 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-3">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <h3 class="text-sm font-semibold text-white flex items-center space-x-2">
+            <i data-lucide="terminal" class="w-4 h-4 text-emerald-400"></i>
+            <span>Journal Événements Ingestion</span>
+          </h3>
+          <button onclick="fetchLogs()" class="text-[11px] text-slate-400 hover:text-slate-200">Rafraîchir</button>
+        </div>
+
+        <div id="log-container" class="font-mono text-[11px] bg-slate-950 p-3 rounded-xl border border-slate-800/80 h-56 overflow-y-auto space-y-1 text-slate-300">
+          <div class="text-slate-500">Initialisation de la console...</div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Modal d'Aide Smartphone Android (IP Webcam) -->
+  <div id="help-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 max-w-lg w-full rounded-2xl p-6 space-y-5 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="smartphone" class="w-5 h-5 text-cyan-400"></i>
+          <h3 class="text-base font-bold text-white">Guide de Connexion Smartphone (0 F CFA)</h3>
+        </div>
+        <button onclick="hideHelpModal()" class="text-slate-400 hover:text-white">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs text-slate-300 leading-relaxed">
+        <div class="flex items-start space-x-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="w-5 h-5 rounded-full bg-cyan-500 text-black font-bold flex items-center justify-center shrink-0">1</span>
+          <div>
+            <span class="font-semibold text-white">Installer l'application :</span>
+            Téléchargez l'application gratuite <span class="text-cyan-400 font-semibold">IP Webcam</span> (de Pavel Khlebovich) sur le Google Play Store ou F-Droid sur votre téléphone Android.
+          </div>
+        </div>
+
+        <div class="flex items-start space-x-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="w-5 h-5 rounded-full bg-cyan-500 text-black font-bold flex items-center justify-center shrink-0">2</span>
+          <div>
+            <span class="font-semibold text-white">Connexion au même réseau :</span>
+            Connectez votre PC et votre smartphone au même réseau Wi-Fi (ou activez le partage de connexion 4G/Wi-Fi du smartphone vers le PC).
+          </div>
+        </div>
+
+        <div class="flex items-start space-x-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="w-5 h-5 rounded-full bg-cyan-500 text-black font-bold flex items-center justify-center shrink-0">3</span>
+          <div>
+            <span class="font-semibold text-white">Démarrer le serveur IP :</span>
+            Dans l'application, descendez tout en bas et touchez <span class="text-emerald-400 font-semibold">"Démarrer le serveur"</span>. L'écran de la caméra s'ouvre avec une adresse IP (ex: <code class="text-cyan-300 bg-slate-800 px-1 py-0.5 rounded">http://192.168.1.45:8080</code>).
+          </div>
+        </div>
+
+        <div class="flex items-start space-x-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="w-5 h-5 rounded-full bg-cyan-500 text-black font-bold flex items-center justify-center shrink-0">4</span>
+          <div>
+            <span class="font-semibold text-white">Ajouter <code class="text-cyan-400">/video</code> à l'URL :</span>
+            Entrez l'URL dans le dashboard : <br>
+            <code class="text-cyan-300 bg-slate-800 px-1.5 py-0.5 rounded mt-1 inline-block">http://VOTRE_IP:8080/video</code> puis cliquez sur <strong>Connecter</strong> !
+          </div>
+        </div>
+      </div>
+
+      <div class="text-right pt-2">
+        <button onclick="hideHelpModal()" class="bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-xs px-4 py-2 rounded-xl">
+          Compris !
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 space-y-2 pointer-events-none"></div>
+
+  <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

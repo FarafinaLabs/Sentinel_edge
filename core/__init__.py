@@ -1,5 +1,8 @@
-"""Sentinel-Edge Core Package."""
+"""Package core de Sentinel-Edge."""
+from core.stream import VideoStream, VideoStreamState
 
-from .detector import IntrusionDetector
-
-__all__ = ["IntrusionDetector"]
+try:
+    from core.detector import IntrusionDetector
+    __all__ = ["VideoStream", "VideoStreamState", "IntrusionDetector"]
+except ImportError:
+    __all__ = ["VideoStream", "VideoStreamState"]

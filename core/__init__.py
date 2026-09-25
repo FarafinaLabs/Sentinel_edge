@@ -1,8 +1,28 @@
 """Package core de Sentinel-Edge."""
-from core.stream import VideoStream, VideoStreamState
+try:
+    from core.stream import VideoStream, VideoStreamState
+except ImportError:
+    VideoStream, VideoStreamState = None, None
 
 try:
     from core.detector import IntrusionDetector
-    __all__ = ["VideoStream", "VideoStreamState", "IntrusionDetector"]
 except ImportError:
-    __all__ = ["VideoStream", "VideoStreamState"]
+    IntrusionDetector = None
+
+try:
+    from core.notifier import TelegramNotifier
+except ImportError:
+    TelegramNotifier = None
+
+try:
+    from core.database import SentinelDatabase
+except ImportError:
+    SentinelDatabase = None
+
+__all__ = [
+    "VideoStream",
+    "VideoStreamState",
+    "IntrusionDetector",
+    "TelegramNotifier",
+    "SentinelDatabase",
+]

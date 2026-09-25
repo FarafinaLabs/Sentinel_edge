@@ -1,6 +1,6 @@
 """Application Web Dashboard pour le module d'ingestion vidéo Sentinel-Edge.
 
-Développé par AMADOU H TRAORE — Binôme IA & Data.
+Développé par AMADOU H TRAORE — Binôme IA & Data + Pôle Télécom.
 Fournit :
 - Interface Web moderne et réactive (Dark theme / Glassmorphism)
 - Streaming vidéo MJPEG haute performance et faible latence
@@ -8,6 +8,8 @@ Fournit :
 - Télémétrie en temps réel (FPS, drops, latence, statut)
 - Déclencheur de snapshot instantané avec galerie
 - Prévisualisation optionnelle du détecteur d'humains YOLOv8n
+- Historique des intrusions persisté en base SQLite
+- Statistiques du module Telegram
 """
 
 import os
@@ -26,6 +28,7 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from config import Config
 from core.stream import VideoStream, VideoStreamState
+from core.database import SentinelDatabase
 
 # Configuration des logs
 logger = logging.getLogger("Sentinel.WebDashboard")
@@ -43,13 +46,20 @@ stream_manager = VideoStream(
     target_height=Config.FRAME_HEIGHT,
     target_fps=Config.TARGET_FPS,
     reconnect_interval=Config.RECONNECT_INTERVAL,
+    mirror_video=Config.MIRROR_VIDEO,
 )
 stream_manager.start()
+
+# Base de données SQLite pour l'historique des intrusions
+db = SentinelDatabase(db_path=Config.DATABASE_PATH)
 
 # Détecteur optionnel (chargé à la demande pour économiser les ressources)
 ai_detector = None
 ai_enabled = False
 recent_logs = []
+
+# Notifieur Telegram (optionnel)
+telegram_notifier = None
 
 
 def log_event(msg: str, level: str = "INFO"):
@@ -63,6 +73,24 @@ def log_event(msg: str, level: str = "INFO"):
 
 log_event("Initialisation du serveur Sentinel-Edge Web Dashboard...")
 log_event(f"Source vidéo par défaut configurée : {Config.VIDEO_SOURCE}")
+log_event(f"Base de données SQLite : {Config.DATABASE_PATH}")
+
+
+def _init_telegram():
+    """Initialise le notifieur Telegram si les tokens sont configurés."""
+    global telegram_notifier
+    try:
+        from core.notifier import create_notifier_from_config
+        telegram_notifier = create_notifier_from_config()
+        if telegram_notifier:
+            log_event("Module Telegram chargé et configuré.", "SUCCESS")
+        else:
+            log_event("Telegram non configuré (tokens manquants).", "WARNING")
+    except Exception as e:
+        log_event(f"Erreur chargement Telegram : {e}", "ERROR")
+
+
+_init_telegram()
 
 
 def get_or_load_detector():
@@ -75,7 +103,7 @@ def get_or_load_detector():
             ai_detector = IntrusionDetector(
                 model_name=Config.YOLO_MODEL_PATH,
                 conf_thresh=Config.CONFIDENCE_THRESHOLD,
-                persistence=2,
+                persistence=Config.PERSISTENCE_FRAMES,
                 device="cpu",
             )
             log_event("Modèle YOLOv8n chargé avec succès sur CPU.", "SUCCESS")
@@ -118,7 +146,14 @@ def generate_frames() -> Generator[bytes, None, None]:
             detector = get_or_load_detector()
             if detector:
                 try:
-                    _, _, display_frame = detector.process_frame(display_frame)
+                    is_confirmed, confidence, display_frame = detector.process_frame(
+                        display_frame
+                    )
+
+                    # Si intrusion confirmée, enregistrer et notifier
+                    if is_confirmed:
+                        _handle_intrusion(display_frame, confidence)
+
                 except Exception as e:
                     pass
 
@@ -136,6 +171,51 @@ def generate_frames() -> Generator[bytes, None, None]:
             b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
         )
         time.sleep(0.01)
+
+
+def _handle_intrusion(annotated_frame, confidence: float):
+    """Gère une intrusion confirmée : snapshot, BDD, Telegram."""
+    # Sauvegarde du snapshot annoté
+    capture_dir = Path(Config.CAPTURE_DIR)
+    capture_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+    ms = int((time.time() % 1) * 1000)
+    filename = f"intrusion_{timestamp_str}_{ms:03d}.jpg"
+    filepath = capture_dir / filename
+
+    # Ajout du bandeau horodaté
+    frame_copy = annotated_frame.copy()
+    stamp = f"SENTINEL-EDGE | {time.strftime('%Y-%m-%d %H:%M:%S')} | Conf: {confidence:.1%}"
+    h = frame_copy.shape[0]
+    cv2.rectangle(frame_copy, (0, h - 28), (frame_copy.shape[1], h), (0, 0, 0), -1)
+    cv2.putText(
+        frame_copy, stamp, (10, h - 8),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1, cv2.LINE_AA,
+    )
+    cv2.imwrite(str(filepath), frame_copy)
+
+    # Envoi Telegram asynchrone
+    telegram_sent = False
+    if telegram_notifier:
+        telegram_notifier.send_alert_async(
+            image_path=str(filepath),
+            confidence=confidence,
+        )
+        telegram_sent = True
+
+    # Persistance en base SQLite
+    db.log_intrusion(
+        confidence=confidence,
+        image_path=str(filepath),
+        source=str(Config.VIDEO_SOURCE),
+        telegram_sent=telegram_sent,
+    )
+
+    log_event(
+        f"🚨 Intrusion détectée ! Confiance: {confidence:.1%} — {filename}",
+        "WARNING",
+    )
 
 
 @app.route("/")
@@ -158,6 +238,17 @@ def api_status():
     """Retourne la télémétrie complète du flux en temps réel."""
     telemetry = stream_manager.get_telemetry()
     telemetry["ai_enabled"] = ai_enabled
+
+    # Ajout des stats Telegram
+    if telegram_notifier:
+        telemetry["telegram"] = telegram_notifier.get_stats()
+        telemetry["telegram_configured"] = True
+    else:
+        telemetry["telegram_configured"] = False
+
+    # Ajout des stats BDD
+    telemetry["db_stats"] = db.get_stats()
+
     return jsonify(telemetry)
 
 
@@ -240,6 +331,21 @@ def api_list_snapshots():
     return jsonify(result)
 
 
+@app.route("/api/intrusions", methods=["GET"])
+def api_intrusion_history():
+    """Retourne l'historique des intrusions depuis la base SQLite."""
+    limit = request.args.get("limit", 50, type=int)
+    events = db.get_recent_events(limit=limit)
+    return jsonify(events)
+
+
+@app.route("/api/intrusions/stats", methods=["GET"])
+def api_intrusion_stats():
+    """Retourne les statistiques agrégées des intrusions."""
+    stats = db.get_stats()
+    return jsonify(stats)
+
+
 @app.route("/captures/<filename>")
 def serve_capture(filename):
     """Sert une image capturée."""
@@ -260,6 +366,8 @@ def start_server():
     print(f"  Développé par AMADOU H TRAORE (Pôle IA & Data)")
     print(f"  URL locale : http://localhost:{Config.WEB_PORT}")
     print(f"  URL réseau : http://0.0.0.0:{Config.WEB_PORT}")
+    print(f"  Base SQLite : {Config.DATABASE_PATH}")
+    print(f"  Telegram : {'Configuré ✅' if telegram_notifier else 'Non configuré ❌'}")
     print("=" * 65)
     app.run(
         host=Config.WEB_HOST,

@@ -77,6 +77,11 @@ async function fetchTelemetry() {
     if (overlayResolution) overlayResolution.textContent = data.resolution;
     if (sourceBadgeType) sourceBadgeType.textContent = data.source_type;
 
+    const customInput = document.getElementById("custom-source-input");
+    if (customInput && document.activeElement !== customInput && typeof data.source === "string" && data.source.startsWith("http")) {
+      customInput.value = data.source;
+    }
+
     // Statut & couleurs du voyant
     if (statusIndicator) {
       statusIndicator.className = "w-2.5 h-2.5 rounded-full animate-pulse";
@@ -155,7 +160,22 @@ function submitCustomSource() {
 function reloadStream() {
   const img = document.getElementById("video-stream");
   if (img) {
-    img.src = "/video_feed?t=" + new Date().getTime();
+    const container = img.parentNode;
+    // Supprimer l'ancienne image pour forcer le navigateur à couper la socket HTTP
+    img.src = "";
+    img.remove();
+    
+    // Attendre un peu pour permettre au backend de se connecter à la nouvelle source
+    setTimeout(() => {
+      const newImg = document.createElement("img");
+      newImg.id = "video-stream";
+      newImg.alt = "Flux Vidéo Sentinel-Edge";
+      newImg.className = "w-full h-full object-contain";
+      newImg.src = "/video_feed?t=" + new Date().getTime();
+      
+      // Réinsérer au début du conteneur
+      container.insertBefore(newImg, container.firstChild);
+    }, 800); // Délai de 800ms pour laisser le temps à la caméra IP de répondre
   }
 }
 

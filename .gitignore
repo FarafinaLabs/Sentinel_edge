@@ -1,5 +1,6 @@
 # Environnements virtuels
 venv/
+.venv/
 .env
 
 # Python cache & build
@@ -8,7 +9,7 @@ __pycache__/
 *.pt
 *.onnx
 
-# Données locales et captures
+# Données locales et captures d'intrusions
 captures/
 *.db
 *.sqlite3
@@ -22,3 +23,8 @@ captures/
 *.pdf
 *.ipynb
 .ipynb_checkpoints/
+
+# Fichiers non liés au projet Sentinel-Edge
+/app.js
+/index.html
+/style.css

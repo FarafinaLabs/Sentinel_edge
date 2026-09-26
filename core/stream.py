@@ -55,6 +55,7 @@ class VideoStream:
         target_fps: int = 30,
         reconnect_interval: float = 2.0,
         max_reconnect_attempts: int = 15,
+        mirror_video: bool = True,
     ) -> None:
         """Initialise le gestionnaire de flux vidéo.
 
@@ -66,6 +67,7 @@ class VideoStream:
             target_fps: Fréquence cible souhaitée.
             reconnect_interval: Délai en secondes entre deux tentatives de reconnexion.
             max_reconnect_attempts: Nombre max de tentatives avant passage en état ERROR.
+            mirror_video: Active l'effet miroir horizontal (selfie) pour les caméras live.
         """
         self.raw_source: Union[int, str] = source
         self.source = self._normalize_source(source)
@@ -74,6 +76,7 @@ class VideoStream:
         self.target_fps: int = target_fps
         self.reconnect_interval: float = reconnect_interval
         self.max_reconnect_attempts: int = max_reconnect_attempts
+        self.mirror_video: bool = mirror_video
 
         # État interne et synchronisation thread-safe
         self._lock = threading.Lock()
@@ -104,6 +107,9 @@ class VideoStream:
         self._mock_pos_y: int = 100
         self._mock_dir_x: int = 5
         self._mock_dir_y: int = 4
+        
+        # Drapeau pour le changement de source thread-safe
+        self._needs_reconnect: bool = False
 
     @staticmethod
     def _normalize_source(src: Union[int, str]) -> Union[int, str]:
@@ -112,6 +118,10 @@ class VideoStream:
             src_str = src.strip()
             if src_str.isdigit():
                 return int(src_str)
+            # Auto-correction intelligente pour IP Webcam Android (ex: http://192.168.1.50:8080 -> /video)
+            if src_str.startswith("http://") or src_str.startswith("https://"):
+                if src_str.endswith(":8080") or src_str.endswith(":8080/"):
+                    src_str = src_str.rstrip("/") + "/video"
             return src_str
         return src
 
@@ -179,9 +189,10 @@ class VideoStream:
             self._state = VideoStreamState.CONNECTING
             self._reconnect_count = 0
             self._last_error = ""
+            self._latest_frame = None
+            self._has_new_frame = False
+            self._needs_reconnect = True
 
-        # Libère l'ancien capteur pour que la boucle principale se reconnecte
-        self._release_capture()
         return True
 
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
@@ -278,20 +289,34 @@ class VideoStream:
         loop_delay: float = 1.0 / max(self.target_fps, 1)
 
         while not self._stop_event.is_set():
-            # Si le capteur n'est pas ouvert, tentative de connexion/reconnexion
-            if not self._is_mock and (self._cap is None or not self._cap.isOpened()):
+            # Check if a source change was requested safely from the worker thread
+            with self._lock:
+                needs_recon = self._needs_reconnect
+                if needs_recon:
+                    self._needs_reconnect = False
+                    
+            if needs_recon:
+                self._release_capture()
+
+            # Si le capteur n'est pas ouvert, ou si on vient de basculer en mock (état CONNECTING)
+            is_disconnected = not self._is_mock and (self._cap is None or not self._cap.isOpened())
+            is_connecting = (self._state == VideoStreamState.CONNECTING)
+
+            if is_disconnected or is_connecting:
                 with self._lock:
-                    self._state = VideoStreamState.RECONNECTING
-                    self._reconnect_count += 1
+                    if is_disconnected and not is_connecting:
+                        self._state = VideoStreamState.RECONNECTING
+                        self._reconnect_count += 1
 
-                logger.warning(
-                    f"Tentative de reconnexion #{self._reconnect_count} vers {self.source} "
-                    f"dans {self.reconnect_interval}s..."
-                )
-
-                # Attente interruptible
-                if self._stop_event.wait(timeout=self.reconnect_interval):
-                    break
+                if not self._is_mock and self._state == VideoStreamState.RECONNECTING:
+                    logger.warning(
+                        f"Tentative de reconnexion #{self._reconnect_count} vers {self.source} "
+                        f"dans {self.reconnect_interval}s..."
+                    )
+    
+                    # Attente interruptible
+                    if self._stop_event.wait(timeout=self.reconnect_interval):
+                        break
 
                 if not self._open_capture():
                     if self._reconnect_count >= self.max_reconnect_attempts:
@@ -311,7 +336,9 @@ class VideoStream:
                 if not ret or frame is None:
                     logger.warning("Perte de signal ou frame corrompue reçue de la source.")
                     self._release_capture()
-                    continue
+                # Effet miroir horizontal (mouvement naturel selfie) pour webcam et IP Webcam
+                if self.mirror_video:
+                    frame = cv2.flip(frame, 1)
 
                 # Si c'est un fichier vidéo local et qu'il arrive à la fin, on reboucle
                 if isinstance(self.source, str) and Path(self.source).is_file():
